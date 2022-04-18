@@ -1,3 +1,4 @@
+from gc import callbacks
 import os, glob, random
 from turtle import forward
 from xml.sax.xmlreader import InputSource
@@ -11,7 +12,7 @@ import cv2
 import torch
 from torchvision.utils import make_grid
 from torchvision import transforms
-from torch import batch_norm, conv2d, nn, optim, relu
+from torch import batch_norm, conv2d, default_generator, nn, optim, relu
 from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
@@ -26,6 +27,7 @@ from tensorboardX import SummaryWriter
 
 print(pl.__version__)
 from pytorch_toolbelt import losses as L
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 def seedeverything(seed):
@@ -127,10 +129,11 @@ class AlveolarNet_lightningSystem(pl.LightningModule):
         out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
         train_dice = self.Compute_IoU(out_cut, target.data.cpu().numpy())
-        print("val_IoU: ", train_dice)
+
+        print("Val_IoU: ", train_dice)
+        self.log('Val_IoU', train_dice)
 
         self.val_iter_num += 1
-
         if self.val_iter_num % 10 == 0:
 
             image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
@@ -187,7 +190,7 @@ class AlveolarNet_lightningSystem(pl.LightningModule):
 transform = ImageTransforms(img_size=448)
 batch_size = 4
 lr = 5e-4
-epoch = 20
+epoch = 1
 
 dm = AlveolarDataModule(TrainData_dir,
                         transform,
@@ -212,16 +215,22 @@ net = Unet()
 model = AlveolarNet_lightningSystem(net, lr, epoch, len(train_dataloader),
                                     transform)
 
+checkpoint_callback = ModelCheckpoint(
+    monitor='Val_IoU',
+    dirpath='./output',
+    filename='Alveolar-Dataset-{epoch:02d}-{val_loss:.2f}',
+    mode='max')
+
 trainer = Trainer(
     logger=False,
     max_epochs=epoch,
     gpus=1,
-    enable_checkpointing=False,
     reload_dataloaders_every_epoch=False,
     reload_dataloaders_every_n_epochs=False,
     num_sanity_val_steps=0,  # Skip Sanity Check
+    callbacks=[checkpoint_callback],
 )
 
 trainer.fit(model, train_dataloader, val_dataloader)
-trainer.test(model, ckpt_path="best", test_dataloaders=test_dataloader)
+trainer.test(model=model, test_dataloaders=test_dataloader)
 writer.close()
