@@ -5,39 +5,23 @@ import random
 import sys
 import time
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from tensorboardX import SummaryWriter
-from torch.nn.modules.loss import CrossEntropyLoss
-from torch.utils.data import DataLoader
 from tqdm import tqdm
-from torchvision import transforms
 import albumentations as A
 from albumentations.pytorch import ToTensor, ToTensorV2
-import pytorch_lightning as pl
-from pytorch_lightning import Trainer
 
-import argparse
-import logging
-import os
-import random
-import sys
-import time
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 from torch.nn.modules.loss import CrossEntropyLoss
 from torch.utils.data import DataLoader
-from tqdm import tqdm
-from utils import BinaryDiceLoss, dice_coef_metric
 from torchvision import transforms
+from utils import BinaryDiceLoss, dice_coef_metric
 from pytorch_toolbelt import losses as L
 import matplotlib.pyplot as plt
-from pytorch_toolbelt import losses as L
 from pytorch_lightning.callbacks import ModelCheckpoint
+import pytorch_lightning as pl
+from pytorch_lightning import Trainer
 
 
 def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
