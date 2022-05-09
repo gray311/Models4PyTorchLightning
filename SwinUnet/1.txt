@@ -1,1 +1,0 @@
-source /home/gray/anaconda3/bin/activate python37
