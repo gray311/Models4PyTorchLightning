@@ -5,23 +5,39 @@ import random
 import sys
 import time
 import numpy as np
-from tqdm import tqdm
-import albumentations as A
-from albumentations.pytorch import ToTensor, ToTensorV2
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 from torch.nn.modules.loss import CrossEntropyLoss
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from torchvision import transforms
-from utils import BinaryDiceLoss, dice_coef_metric
-from pytorch_toolbelt import losses as L
-import matplotlib.pyplot as plt
-from pytorch_lightning.callbacks import ModelCheckpoint
+import albumentations as A
+from albumentations.pytorch import ToTensor, ToTensorV2
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
+
+import argparse
+import logging
+import os
+import random
+import sys
+import time
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from tensorboardX import SummaryWriter
+from torch.nn.modules.loss import CrossEntropyLoss
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from utils import BinaryDiceLoss, dice_coef_metric
+from torchvision import transforms
+from pytorch_toolbelt import losses as L
+import matplotlib.pyplot as plt
+from pytorch_toolbelt import losses as L
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
@@ -103,11 +119,12 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             data, target = img.cuda(), mask.cuda()
             outputs = self.net(data)
 
-            out_cut = np.copy(outputs.data.cpu().numpy())
+            out_cut = np.copy(outputs.data.cpu().float().numpy())
             out_cut[np.nonzero(out_cut < 0.5)] = 0.0
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
-            train_dice = self.Compute_IoU(out_cut, target.data.cpu().numpy())
+            train_dice = self.Compute_IoU(out_cut,
+                                          target.data.cpu().float().numpy())
             loss = self.loss_fn(outputs, target)
             lr_ = self.lr * (1.0 -
                              self.train_iter_num / self.max_iterations)**0.9
@@ -150,10 +167,12 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
             train_dice = self.Compute_IoU(out_cut, target.data.cpu().numpy())
-            print("val_IoU: ", train_dice)
+
+            print("Val_IoU: ", train_dice)
+            self.log('Val_IoU', train_dice)
+            return train_dice
 
             self.val_iter_num += 1
-
             if self.val_iter_num % 10 == 0:
 
                 image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
@@ -180,6 +199,7 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
             train_dice = self.Compute_IoU(out_cut, target.data.cpu().numpy())
+            return train_dice
             print("test_IoU: ", train_dice)
 
             self.test_iter_num += 1
@@ -201,30 +221,55 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
                 writer.add_image('test/GroundTruth', gt, self.test_iter_num)
 
         def training_epoch_end(self, outputs):
+
             self.step += 1
             outputs = np.array(outputs)
+            print(outputs.shape)
 
-    model = AlveolarNet_lightningSystem(model, base_lr, args.max_epochs,
-                                        len(train_dataloader), transform)
-    checkpoint_callback = ModelCheckpoint(
-        monitor='Val_IoU',
-        dirpath='./output',
-        filename='Alveolar-Dataset-{epoch:02d}-{Val_IoU:.2f}',
-        mode='max')
+        def test_epoch_end(self, outputs):
+            print(sum(outputs) / len(outputs))
 
-    trainer = Trainer(
-        logger=False,
-        max_epochs=args.max_epochs,
-        gpus=1,
-        reload_dataloaders_every_n_epochs=False,
-        num_sanity_val_steps=0,  # Skip Sanity Check
-        callbacks=[checkpoint_callback],
-        #precision=16,
-        #accumulate_grad_batches=8,
-        #gradient_clip_val=0.5,
-    )
+    if args.pattern == 'train':
+        model = AlveolarNet_lightningSystem(model, base_lr, args.max_epochs,
+                                            len(train_dataloader), transform)
+        checkpoint_callback = ModelCheckpoint(
+            monitor='Val_IoU',
+            dirpath='./output',
+            filename='Alveolar-Dataset-{epoch:02d}-{Val_IoU:.2f}',
+            mode='max')
 
-    trainer.fit(model, train_dataloader, val_dataloader)
-    trainer.test(model=model, test_dataloaders=test_dataloader)
+        trainer = Trainer(
+            logger=False,
+            max_epochs=args.max_epochs,
+            gpus=1,
+            reload_dataloaders_every_n_epochs=False,
+            num_sanity_val_steps=0,  # Skip Sanity Check
+            callbacks=[checkpoint_callback],
+            #precision=16,
+            #accumulate_grad_batches=8,
+            #gradient_clip_val=0.5,
+        )
+
+        trainer.fit(model, train_dataloader, val_dataloader)
+    else:
+        model = AlveolarNet_lightningSystem.load_from_checkpoint(
+            net=model,
+            lr=base_lr,
+            epoch=args.max_epochs,
+            len=len(train_dataloader),
+            transform=transform,
+            checkpoint_path=
+            './output/Alveolar-Dataset-epoch=13-Val_IoU=0.95.ckpt')
+        trainer = Trainer(
+            logger=False,
+            gpus=1,
+            #limit_test_batches=0.05,
+            #precision=16,
+            #accumulate_grad_batches=8,
+            #gradient_clip_val=0.5,
+        )
+        trainer.test(model=model, dataloaders=test_dataloader)
+
     writer.close()
+
     return "Training Finished!"
