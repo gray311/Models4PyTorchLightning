@@ -85,6 +85,19 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     writer = SummaryWriter(output_dir + '/log')
 
+    def MoveImage2tensorboard(data, target, out_cut, iter_num):
+        image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+        image = image * std + mean
+        image = image * 255.0
+        image = (image - image.min()) / (image.max() - image.min())
+        writer.add_image('train/Image', image.transpose(2, 0, 1), iter_num)
+        pred = out_cut[0, :, :, :] * 50
+        writer.add_image('train/Prediction', pred, iter_num)
+        gt = target[0, :, :, :] * 50
+        writer.add_image('train/GroundTruth', gt, iter_num)
+
     class AlveolarNet_lightningSystem(pl.LightningModule):
 
         def __init__(self, net, lr, epoch, len, transform):
@@ -109,9 +122,7 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
                                        second_weight=0.5).cuda()
 
         def configure_optimizers(self):
-            self.optimizer = torch.optim.AdamW(model.parameters(),
-                                               lr=self.lr,
-                                               weight_decay=1e-3)
+            self.optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr)
             return self.optimizer
 
         def training_step(self, batch, batch_idx):
@@ -125,7 +136,7 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
 
             train_dice = self.Compute_IoU(out_cut,
                                           target.data.cpu().float().numpy())
-            loss = self.loss_fn(outputs, target)
+            loss = self.loss_fn(outputs.float(), target.float())
             lr_ = self.lr * (1.0 -
                              self.train_iter_num / self.max_iterations)**0.9
             for param_group in self.optimizer.param_groups:
@@ -140,20 +151,8 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
                               self.train_iter_num)
 
             if self.train_iter_num % 20 == 0:
-
-                image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
-                mean = [0.485, 0.456, 0.406]
-                std = [0.229, 0.224, 0.225]
-                image = image * std + mean
-                image = image * 255.0
-                image = (image - image.min()) / (image.max() - image.min())
-                writer.add_image('train/Image', image.transpose(2, 0, 1),
-                                 self.train_iter_num)
-
-                pred = out_cut[0, :, :, :] * 50
-                writer.add_image('train/Prediction', pred, self.train_iter_num)
-                gt = target[0, :, :, :] * 50
-                writer.add_image('train/GroundTruth', gt, self.train_iter_num)
+                MoveImage2tensorboard(data, target, out_cut,
+                                      self.train_iter_num)
 
             return {'loss': loss, 'IoU': train_dice}
 
@@ -174,20 +173,7 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
 
             self.val_iter_num += 1
             if self.val_iter_num % 10 == 0:
-
-                image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
-                mean = [0.485, 0.456, 0.406]
-                std = [0.229, 0.224, 0.225]
-                image = image * std + mean
-                image = image * 255.0
-                image = (image - image.min()) / (image.max() - image.min())
-                writer.add_image('val/Image', image.transpose(2, 0, 1),
-                                 self.val_iter_num)
-
-                pred = out_cut[0, :, :, :] * 50
-                writer.add_image('val/Prediction', pred, self.val_iter_num)
-                gt = target[0, :, :, :] * 50
-                writer.add_image('val/GroundTruth', gt, self.val_iter_num)
+                MoveImage2tensorboard(data, target, out_cut, self.val_iter_num)
 
         def test_step(self, batch, batch_idx):
             img, mask = batch
@@ -203,22 +189,9 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             print("test_IoU: ", train_dice)
 
             self.test_iter_num += 1
-
             if self.test_iter_num % 10 == 0:
-
-                image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
-                mean = [0.485, 0.456, 0.406]
-                std = [0.229, 0.224, 0.225]
-                image = image * std + mean
-                image = image * 255.0
-                image = (image - image.min()) / (image.max() - image.min())
-                writer.add_image('test/Image', image.transpose(2, 0, 1),
-                                 self.test_iter_num)
-
-                pred = out_cut[0, :, :, :] * 50
-                writer.add_image('test/Prediction', pred, self.test_iter_num)
-                gt = target[0, :, :, :] * 50
-                writer.add_image('test/GroundTruth', gt, self.test_iter_num)
+                MoveImage2tensorboard(data, target, out_cut,
+                                      self.test_iter_num)
 
         def training_epoch_end(self, outputs):
 
