@@ -1,7 +1,9 @@
 import argparse
+from curses import keyname
 import logging
 import os
 import random
+from socket import IPPORT_USERRESERVED
 import sys
 import time
 import numpy as np
@@ -12,18 +14,22 @@ from tensorboardX import SummaryWriter
 from torch.nn.modules.loss import CrossEntropyLoss
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from torchvision import transforms
+import pandas as pd
 import albumentations as A
 from albumentations.pytorch import ToTensor, ToTensorV2
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 from utils import BinaryDiceLoss, dice_coef_metric
+from torchvision import transforms
 from pytorch_toolbelt import losses as L
 import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
+from statistics import mean
+
+metrics = ['IoU', 'ACC', 'SE', 'DSC', 'SP', 'HD']
 
 
-def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
+def trainer_alveolar(args, model, output_dir):
 
     logging.basicConfig(filename=output_dir + "/log.txt",
                         level=logging.INFO,
@@ -39,24 +45,12 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
     from datasets.dataset_alveolar import ImageTransforms, AlveolarDataset, AlveolarDataModule
 
     transform = ImageTransforms(img_size=448)
-    dm = AlveolarDataModule(train_data_dir,
+    dm = AlveolarDataModule(args.list_dir,
                             transform,
                             batch_size,
                             phase='train',
                             seed=args.seed)
     dm.prepare_data()
-    dm.setup()
-    train_dataloader = dm.train_dataloader()
-    val_dataloader = dm.val_dataloader()
-
-    dm = AlveolarDataModule(test_data_dir,
-                            transform,
-                            batch_size,
-                            phase='test',
-                            seed=args.seed)
-    dm.prepare_data()
-    dm.setup()
-    test_dataloader = dm.test_dataloader()
 
     def worker_init_fn(worker_id):
         random.seed(args.seed + worker_id)
@@ -68,18 +62,18 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     writer = SummaryWriter(output_dir + '/log')
 
-    def MoveImage2tensorboard(data, target, out_cut, iter_num):
+    def MoveImage2tensorboard(data, target, out_cut, iter_num, mode):
         image = data[0, :, :, :].permute(1, 2, 0).data.cpu().numpy()
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         image = image * std + mean
         image = image * 255.0
         image = (image - image.min()) / (image.max() - image.min())
-        writer.add_image('train/Image', image.transpose(2, 0, 1), iter_num)
+        writer.add_image(mode + '/Image', image.transpose(2, 0, 1), iter_num)
         pred = out_cut[0, :, :, :] * 50
-        writer.add_image('train/Prediction', pred, iter_num)
+        writer.add_image(mode + 'train/Prediction', pred, iter_num)
         gt = target[0, :, :, :] * 50
-        writer.add_image('train/GroundTruth', gt, iter_num)
+        writer.add_image(mode + '/GroundTruth', gt, iter_num)
 
     class AlveolarNet_lightningSystem(pl.LightningModule):
 
@@ -96,7 +90,7 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             self.test_iter_num = 0
             self.max_iterations = self.epoch * len
 
-            self.Compute_IoU = dice_coef_metric()
+            self.evaluate_metric = dice_coef_metric()
             bce_loss = nn.BCEWithLogitsLoss()
             dice_loss = BinaryDiceLoss()
             self.loss_fn = L.JointLoss(first=dice_loss,
@@ -117,8 +111,9 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             out_cut[np.nonzero(out_cut < 0.5)] = 0.0
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
-            train_dice = self.Compute_IoU(out_cut,
-                                          target.data.cpu().float().numpy())
+            train_dice = self.evaluate_metric(
+                out_cut,
+                target.data.cpu().float().numpy(), 'IoU')
             loss = self.loss_fn(outputs.float(), target.float())
             lr_ = self.lr * (1.0 -
                              self.train_iter_num / self.max_iterations)**0.9
@@ -135,7 +130,7 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
 
             if self.train_iter_num % 20 == 0:
                 MoveImage2tensorboard(data, target, out_cut,
-                                      self.train_iter_num)
+                                      self.train_iter_num, 'train')
 
             return {'loss': loss, 'IoU': train_dice}
 
@@ -148,7 +143,9 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             out_cut[np.nonzero(out_cut < 0.5)] = 0.0
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
-            train_dice = self.Compute_IoU(out_cut, target.data.cpu().numpy())
+            train_dice = self.evaluate_metric(
+                out_cut,
+                target.data.cpu().float().numpy(), 'IoU')
 
             print("Val_IoU: ", train_dice)
             self.log('Val_IoU', train_dice)
@@ -156,7 +153,8 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
 
             self.val_iter_num += 1
             if self.val_iter_num % 10 == 0:
-                MoveImage2tensorboard(data, target, out_cut, self.val_iter_num)
+                MoveImage2tensorboard(data, target, out_cut, self.val_iter_num,
+                                      'val')
 
         def test_step(self, batch, batch_idx):
             img, mask = batch
@@ -167,14 +165,38 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             out_cut[np.nonzero(out_cut < 0.5)] = 0.0
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
-            train_dice = self.Compute_IoU(out_cut, target.data.cpu().numpy())
-            return train_dice
-            print("test_IoU: ", train_dice)
+            test_IoU = self.evaluate_metric(out_cut,
+                                            target.data.cpu().float().numpy(),
+                                            'IoU')
+            test_ACC = self.evaluate_metric(out_cut,
+                                            target.data.cpu().float().numpy(),
+                                            'ACC')
+            test_SE = self.evaluate_metric(out_cut,
+                                           target.data.cpu().float().numpy(),
+                                           'Sensitivity')
+            test_DSC = self.evaluate_metric(out_cut,
+                                            target.data.cpu().float().numpy(),
+                                            'DSC')
+            test_SPEC = self.evaluate_metric(out_cut,
+                                             target.data.cpu().float().numpy(),
+                                             'SPEC')
+            test_HD = self.evaluate_metric(out_cut,
+                                           target.data.cpu().float().numpy(),
+                                           'HD')
+            return {
+                'IoU': test_IoU,
+                'ACC': test_ACC,
+                'SE': test_SE,
+                'DSC': test_DSC,
+                'SP': test_SPEC,
+                'HD': test_HD
+            }
+            print("test_IoU: ", test_IoU)
 
             self.test_iter_num += 1
             if self.test_iter_num % 10 == 0:
                 MoveImage2tensorboard(data, target, out_cut,
-                                      self.test_iter_num)
+                                      self.test_iter_num, 'test')
 
         def training_epoch_end(self, outputs):
 
@@ -183,9 +205,15 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
             print(outputs.shape)
 
         def test_epoch_end(self, outputs):
-            print(sum(outputs) / len(outputs))
+            metrics_dict = {}
+            for key in metrics:
+                metrics_dict[key] = mean([item[key] for item in outputs])
+            print(metrics_dict)
 
     if args.pattern == 'train':
+        dm.setup('fit')
+        train_dataloader = dm.train_dataloader()
+        val_dataloader = dm.val_dataloader()
         model = AlveolarNet_lightningSystem(model, base_lr, args.max_epochs,
                                             len(train_dataloader), transform)
         checkpoint_callback = ModelCheckpoint(
@@ -208,14 +236,16 @@ def trainer_alveolar(args, model, output_dir, train_data_dir, test_data_dir):
 
         trainer.fit(model, train_dataloader, val_dataloader)
     else:
+        dm.setup('test')
+        test_dataloader = dm.test_dataloader()
         model = AlveolarNet_lightningSystem.load_from_checkpoint(
             net=model,
             lr=base_lr,
             epoch=args.max_epochs,
-            len=len(train_dataloader),
+            len=len(test_dataloader),
             transform=transform,
             checkpoint_path=
-            './output/Alveolar-Dataset-epoch=13-Val_IoU=0.95.ckpt')
+            './output/Alveolar-Dataset-epoch=28-Val_IoU=0.95.ckpt')
         trainer = Trainer(
             logger=False,
             gpus=1,
