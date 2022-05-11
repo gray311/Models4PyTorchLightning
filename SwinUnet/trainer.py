@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
 from statistics import mean
 
-metrics = ['IoU', 'ACC', 'SE', 'DSC', 'SP', 'HD']
+metrics = ['IoU', 'ACC', 'SENS', 'DSC', 'SPEC', 'HD']
 
 
 def trainer_alveolar(args, model, output_dir):
@@ -165,33 +165,15 @@ def trainer_alveolar(args, model, output_dir):
             out_cut[np.nonzero(out_cut < 0.5)] = 0.0
             out_cut[np.nonzero(out_cut >= 0.5)] = 1.0
 
-            test_IoU = self.evaluate_metric(out_cut,
-                                            target.data.cpu().float().numpy(),
-                                            'IoU')
-            test_ACC = self.evaluate_metric(out_cut,
-                                            target.data.cpu().float().numpy(),
-                                            'ACC')
-            test_SE = self.evaluate_metric(out_cut,
-                                           target.data.cpu().float().numpy(),
-                                           'Sensitivity')
-            test_DSC = self.evaluate_metric(out_cut,
-                                            target.data.cpu().float().numpy(),
-                                            'DSC')
-            test_SPEC = self.evaluate_metric(out_cut,
-                                             target.data.cpu().float().numpy(),
-                                             'SPEC')
-            test_HD = self.evaluate_metric(out_cut,
-                                           target.data.cpu().float().numpy(),
-                                           'HD')
-            return {
-                'IoU': test_IoU,
-                'ACC': test_ACC,
-                'SE': test_SE,
-                'DSC': test_DSC,
-                'SP': test_SPEC,
-                'HD': test_HD
-            }
-            print("test_IoU: ", test_IoU)
+            metric_dict = {}
+            for key in metrics:
+                metric_dict[key] = self.evaluate_metric(
+                    out_cut,
+                    target.data.cpu().float().numpy(), key)
+
+            return metric_dict
+
+            print("test_IoU: ", metric_dict['IoU'])
 
             self.test_iter_num += 1
             if self.test_iter_num % 10 == 0:
