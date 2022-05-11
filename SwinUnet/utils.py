@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import os, glob, random
 import cv2
-
+from miseval import evaluate
 import torch
 from torchvision.utils import make_grid
 from torchvision import transforms
@@ -42,6 +42,7 @@ class BinaryDiceLoss(nn.Module):
     Raise:
         Exception if unexpected reduction
     """
+
     def __init__(self, smooth=1, p=2, reduction='mean'):
         super(BinaryDiceLoss, self).__init__()
         self.smooth = smooth
@@ -71,13 +72,13 @@ class BinaryDiceLoss(nn.Module):
 
 
 class dice_coef_metric:
+
     def __init__(self):
         pass
 
-    def __call__(self, inputs, target):
-        intersection = 2.0 * (target * inputs).sum()
-        union = target.sum() + inputs.sum()
-        if target.sum() == 0 and inputs.sum() == 0:
-            return 1.0
-
-        return intersection / union
+    def __call__(self, inputs, target, index):
+        metric_list = [
+            evaluate(real, pred, metric=index)
+            for real, pred in zip(inputs.squeeze(1), target.squeeze(1))
+        ]
+        return sum(metric_list) / len(metric_list)
