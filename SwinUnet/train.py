@@ -1,3 +1,4 @@
+from turtle import st
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -30,6 +31,10 @@ parser.add_argument('--root_path',
                     type=str,
                     default='../data/Synapse/train_npz',
                     help='root dir for data')
+parser.add_argument('--pattern',
+                    type=str,
+                    default='train',
+                    help='train or test')
 parser.add_argument('--dataset',
                     type=str,
                     default='Synapse',
@@ -145,7 +150,7 @@ if __name__ == "__main__":
     dataset_config = {
         'AlveolarNet': {
             'root_path': args.root_path,
-            'list_dir': './lists/lists_Synapse',
+            'list_dir': './datasets/dataset_alveolar',
             'num_classes': args.num_classes,
         },
     }
@@ -164,11 +169,13 @@ if __name__ == "__main__":
     net = ViT_seg(config, img_size=args.img_size,
                   num_classes=args.num_classes).cuda()
     net.load_from(config)
+    '''
+    from networks.UNet import Unet
 
-    train_data_dir = './datasets/train/'
-    test_data_dir = './datasets/test/'
+    net = Unet()
+
+    '''
     trainer = {
         'AlveolarNet': trainer_alveolar,
     }
-    trainer[dataset_name](args, net, args.output_dir, train_data_dir,
-                          test_data_dir)
+    trainer[dataset_name](args, net, args.output_dir)
